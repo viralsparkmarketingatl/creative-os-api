@@ -21,25 +21,29 @@ module.exports = async function handler(req, res) {
     const client   = (body.client   || '').trim();
     const brandInfo= (body.brandInfo || '').trim();
     const topic    = (body.topic    || '').trim();
-    const platform = (body.platform || 'Instagram Reels / TikTok').trim();
     const length   = (body.length   || '30 seconds').trim();
     const goal     = (body.goal     || 'Free lead magnet via comment keyword').trim();
-    const hookStyle= (body.hookStyle || 'auto').trim();
     const extra    = (body.extra    || '').trim();
     let   count    = parseInt(body.count, 10); if (!count || count < 1) count = 1; if (count > 6) count = 6;
+
+    // Video style → which slice of the 959-entry library to use as intelligence
+    const style = (body.style || 'all').trim();
+    let entriesText, styleLabel;
+    if (ENTRIES[style]) { entriesText = ENTRIES[style].text; styleLabel = ENTRIES[style].label; }
+    else { entriesText = Object.values(ENTRIES).map(s => s.text).join('\n\n'); styleLabel = 'Any / all styles'; }
 
     if (!topic) return res.status(400).json({ error: 'missing topic/angle' });
 
     const userMsg =
 `Write ${count} distinct short-form video script${count > 1 ? 's' : ''} for this client. Each must follow the Viral Spark Script Architecture and the OUTPUT FORMAT exactly.
 
+VIDEO STYLE: ${styleLabel} — write in this style and draw ONLY on the ${styleLabel}-style entries provided in your system context.
 CLIENT: ${client || '(unspecified)'}
 BUSINESS CONTEXT: ${brandInfo || '(none provided — infer sensibly from the client name and topic)'}
 TOPIC / ANGLE: ${topic}
-PLATFORM: ${platform}
-TARGET LENGTH: ${length}
+TARGET LENGTH: ${length} (vertical short-form, built to perform cross-platform — Reels / TikTok / Shorts)
 GOAL / OFF-RAMP (CTA): ${goal}
-HOOK STYLE: ${hookStyle === 'auto' ? 'Auto — pick the strongest hook category for this topic (and vary it across variations)' : hookStyle}
+HOOKS: You decide — choose the strongest hooks from the ${styleLabel}-style entries based on this topic and context${count > 1 ? ', and vary the hook approach across the variations' : ''}.
 ${extra ? 'EXTRA DIRECTION: ' + extra + '\n' : ''}
 ${count > 1 ? 'Make each variation a genuinely DIFFERENT hook category/angle — not the same script reworded.' : ''}
 FIRST silently scan the 959-entry pattern library in your system context, pick the proven hook formulas whose structure best fits this topic/niche/goal, then adapt their STRUCTURE (never their words) into the script. When a beat is modeled on a specific entry, you may note it inline like [modeled on V214]. Return only the script(s) in the required Markdown format — no preamble.`;
@@ -58,7 +62,7 @@ FIRST silently scan the 959-entry pattern library in your system context, pick t
         // First call writes the cache (~1.25x); calls within 5 min read it at ~0.1x.
         system: [
           { type: 'text', text: FRAMEWORK },
-          { type: 'text', text: ENTRIES, cache_control: { type: 'ephemeral' } }
+          { type: 'text', text: entriesText, cache_control: { type: 'ephemeral' } }
         ],
         messages: [{ role: 'user', content: userMsg }]
       })

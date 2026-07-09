@@ -91,7 +91,7 @@ For EACH script variation, output exactly:
 
 ### Script [n] — [Hook Category] — "[the primary hook line]"
 **Hook formula used:** [which formula/category, one line]
-**Platform / length:** [platform] · [target length]
+**Length:** [target length] · vertical short-form (Reels / TikTok / Shorts)
 
 | Time | Beat | 🎙️ VERBAL (say this) | 🎬 VISUAL (show this) |
 |------|------|----------------------|------------------------|
