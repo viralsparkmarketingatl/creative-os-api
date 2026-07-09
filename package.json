@@ -1,0 +1,6 @@
+{
+  "name": "creative-os-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Viral Spark Creative OS — image generation proxy (Vercel serverless)."
+}
