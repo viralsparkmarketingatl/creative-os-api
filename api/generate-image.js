@@ -1,8 +1,8 @@
 // Viral Spark Creative OS — image generation proxy (Vercel serverless function)
-// Holds the OpenAI key server-side (env var).
-// - If a reference image is provided -> uses the IMAGE EDITS endpoint (reference-guided,
-//   reproduces the reference's style/layout). Needs gpt-image-1.
-// - If no reference -> plain text-to-image generation (gpt-image-1, falls back to dall-e-3).
+// Uses OpenAI gpt-image-2 (best text accuracy, ~$0.03-0.06/img). Requires the OpenAI
+// organization to be ID-verified (platform.openai.com -> Settings -> Organization).
+// - With a reference image -> IMAGE EDITS (reference-guided full poster).
+// - Without -> plain generation (gpt-image-2, falls back to dall-e-3).
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -17,11 +17,12 @@ module.exports = async function handler(req, res) {
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const prompt = (body.prompt || '').trim();
-    const size = body.size || '1536x1024';
-    const refImage = body.refImage || null; // data URL or raw base64
+    const size = body.size || '1536x1152';   // 4:3 keeps the whole template in frame
+    const quality = body.quality || 'high';
+    const refImage = body.refImage || null;
     if (!prompt) return res.status(400).json({ error: 'missing prompt' });
 
-    // ---------- REFERENCE-GUIDED (image edits) ----------
+    // ---------- REFERENCE-GUIDED (image edits, gpt-image-2) ----------
     if (refImage) {
       let raw = refImage, mime = 'image/png';
       const m = /^data:(image\/[a-zA-Z]+);base64,(.*)$/s.exec(refImage);
@@ -30,20 +31,21 @@ module.exports = async function handler(req, res) {
       const ext = mime.includes('jpeg') ? 'jpg' : (mime.includes('webp') ? 'webp' : 'png');
 
       const form = new FormData();
-      form.append('model', 'gpt-image-1');
+      form.append('model', 'gpt-image-2');
       form.append('prompt', prompt);
       form.append('size', size);
+      form.append('quality', quality);
       form.append('image', new Blob([buf], { type: mime }), 'reference.' + ext);
 
       const r = await fetch('https://api.openai.com/v1/images/edits', {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + key }, // do NOT set Content-Type; fetch sets the multipart boundary
+        headers: { Authorization: 'Bearer ' + key }, // no Content-Type — fetch sets the multipart boundary
         body: form
       });
       if (!r.ok) {
         const t = await r.text();
         return res.status(502).json({
-          error: 'Reference-guided generation failed. This needs gpt-image-1 (your OpenAI org may need one-time ID verification at platform.openai.com → Settings → Organization).',
+          error: 'gpt-image-2 edit failed. Most common cause: your OpenAI organization is not ID-verified yet (platform.openai.com -> Settings -> Organization -> Verify). It can also be a billing/credit issue.',
           detail: t.slice(0, 400)
         });
       }
@@ -53,22 +55,22 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ b64 });
     }
 
-    // ---------- PLAIN GENERATION (no reference) ----------
+    // ---------- PLAIN GENERATION (gpt-image-2, fallback dall-e-3) ----------
     let r = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-      body: JSON.stringify({ model: 'gpt-image-1', prompt, size, n: 1 })
+      body: JSON.stringify({ model: 'gpt-image-2', prompt, size, quality, n: 1 })
     });
     if (!r.ok) {
       const firstErr = await r.text();
       r = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-        body: JSON.stringify({ model: 'dall-e-3', prompt, size: '1792x1024', n: 1, response_format: 'b64_json' })
+        body: JSON.stringify({ model: 'dall-e-3', prompt, size: '1024x1024', n: 1, response_format: 'b64_json' })
       });
       if (!r.ok) {
         const secondErr = await r.text();
-        return res.status(502).json({ error: 'Both image models failed.', gpt_image_1: firstErr.slice(0, 300), dall_e_3: secondErr.slice(0, 300) });
+        return res.status(502).json({ error: 'Image generation failed.', gpt_image_2: firstErr.slice(0, 300), dall_e_3: secondErr.slice(0, 300) });
       }
     }
     const data = await r.json();
