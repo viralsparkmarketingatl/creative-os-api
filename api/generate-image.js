@@ -19,23 +19,28 @@ module.exports = async function handler(req, res) {
     const prompt = (body.prompt || '').trim();
     const size = body.size || '1536x1152';   // 4:3 keeps the whole template in frame
     const quality = body.quality || 'high';
-    const refImage = body.refImage || null;
+    // Accept an array of references (refImages) OR a single one (refImage, back-compat)
+    const refImages = (Array.isArray(body.refImages) && body.refImages.length)
+      ? body.refImages.filter(Boolean)
+      : (body.refImage ? [body.refImage] : []);
     if (!prompt) return res.status(400).json({ error: 'missing prompt' });
 
     // ---------- REFERENCE-GUIDED (image edits, gpt-image-2) ----------
-    if (refImage) {
-      let raw = refImage, mime = 'image/png';
-      const m = /^data:(image\/[a-zA-Z]+);base64,(.*)$/s.exec(refImage);
-      if (m) { mime = m[1]; raw = m[2]; }
-      const buf = Buffer.from(raw, 'base64');
-      const ext = mime.includes('jpeg') ? 'jpg' : (mime.includes('webp') ? 'webp' : 'png');
-
+    if (refImages.length) {
       const form = new FormData();
       form.append('model', 'gpt-image-2');
       form.append('prompt', prompt);
       form.append('size', size);
       form.append('quality', quality);
-      form.append('image', new Blob([buf], { type: mime }), 'reference.' + ext);
+      // gpt-image-2 edits accepts multiple reference images via image[] (up to ~16)
+      refImages.slice(0, 16).forEach((ref, idx) => {
+        let raw = ref, mime = 'image/png';
+        const m = /^data:(image\/[a-zA-Z]+);base64,(.*)$/s.exec(ref);
+        if (m) { mime = m[1]; raw = m[2]; }
+        const buf = Buffer.from(raw, 'base64');
+        const ext = mime.includes('jpeg') ? 'jpg' : (mime.includes('webp') ? 'webp' : 'png');
+        form.append('image[]', new Blob([buf], { type: mime }), 'reference' + idx + '.' + ext);
+      });
 
       const r = await fetch('https://api.openai.com/v1/images/edits', {
         method: 'POST',
