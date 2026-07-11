@@ -12,6 +12,8 @@ Structure:
 - Middle pages = the VALUE — the actual tips / causes / steps from the blog, ONE clear idea per page, same brand style.
 - Last page = the WRAP-UP / CTA — a closing page (short recap + a clear call to action such as "Book an appointment" or "See a vet").
 
+IF N = 1: ignore the multi-page structure above. Instead design ONE complete, self-contained standalone post — a full graphic with a strong headline, brief supporting copy, the key visual/subject, and a clear CTA — all in the exact brand style of the reference.
+
 You may also be given a BRAND KIT (exact hex colors + brand rules/voice/layout do's and don'ts). When present, EVERY page's edit prompt MUST use those EXACT hex colors, obey the layout do's/don'ts (e.g. left-align headlines, never right-align, keep white space), match the voice, and reproduce the brand's signature elements. All pages are PORTRAIT 4:5 vertical Instagram format — state "portrait 4:5 vertical Instagram layout" in each prompt.
 
 For EACH page, write a complete, standalone GPT Image 2 edit prompt that recreates the reference's EXACT layout, color scheme, fonts, logo placement, and design structure, but with that page's specific headline text and subject/photo. Keep every brand element identical across all pages so they read as ONE cohesive set. Spell every word exactly right. Keep headlines short and punchy (a carousel, not paragraphs).
