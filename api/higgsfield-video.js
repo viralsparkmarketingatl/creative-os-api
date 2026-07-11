@@ -63,20 +63,22 @@ module.exports = async function handler(req, res) {
     const model = body.model || 'dop-turbo';
     if (!prompt) return res.status(400).json({ error: 'missing prompt' });
 
-    let endpoint, input;
+    let endpoint, params;
     if (mode === 'image') {
       if (!imageUrl) return res.status(400).json({ error: 'image mode needs a public imageUrl' });
-      endpoint = '/v1/image2video/dop';
-      input = { model, prompt, input_images: [{ type: 'image_url', image_url: imageUrl }] };
+      endpoint = body.endpoint || '/v1/image2video/dop';
+      params = { model: model || 'dop-turbo', prompt, input_images: [{ type: 'image_url', image_url: imageUrl }] };
     } else {
-      // text-to-video — endpoint to be verified on first live run; best-effort per SDK naming.
-      endpoint = '/v1/text2video/dop';
-      input = { model, prompt };
+      // text-to-video — endpoint/model overridable via body while we confirm the live model catalog.
+      endpoint = body.endpoint || '/v1/text2video/dop';
+      params = { model: model || 'dop-turbo', prompt };
     }
-    if (body.duration) input.duration = body.duration;
-    if (body.aspect_ratio) input.aspect_ratio = body.aspect_ratio;
+    if (body.duration) params.duration = body.duration;
+    if (body.aspect_ratio) params.aspect_ratio = body.aspect_ratio;
+    if (body.extraParams && typeof body.extraParams === 'object') Object.assign(params, body.extraParams);
 
-    const r = await fetch(BASE + endpoint, { method: 'POST', headers: authHeaders, body: JSON.stringify({ input }) });
+    // platform.higgsfield.ai expects the payload wrapped in { params: {...} }
+    const r = await fetch(BASE + endpoint, { method: 'POST', headers: authHeaders, body: JSON.stringify({ params }) });
     const txt = await r.text();
     let d; try { d = JSON.parse(txt); } catch (e) { d = {}; }
     if (!r.ok) return res.status(502).json({ error: 'submit failed', endpoint, detail: txt.slice(0, 400) });
