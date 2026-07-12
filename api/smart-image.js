@@ -9,6 +9,7 @@ const PROMPT_SYSTEM =
 - Keeps every brand element, logo, icon, and fixed label byte-for-byte identical to the reference.
 - Changes ONLY what the user's intent specifies (e.g. the headline text, the featured photo/subject, a seasonal theme), described precisely and concretely so the model renders it correctly.
 - Explicitly tells the model to spell every word exactly right and keep a polished, professional, on-brand look.
+IMAGERY SAFETY (critical — OpenAI rejects graphic images): NEVER depict blood, stool, vomit, wounds, injuries, or graphic/medical content, even for medical topics. Always show a calm, healthy, appealing subject; keep any medical specifics in the TEXT only.
 If a BRAND KIT is provided (exact hex colors + rules/voice/layout do's and don'ts), the prompt MUST use those exact hex colors, obey the layout do's/don'ts, and match the brand's signature elements.
 Keep it tight and concrete (aim for 2-6 sentences). Output ONLY the final edit prompt text.`;
 

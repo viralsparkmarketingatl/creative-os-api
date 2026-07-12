@@ -14,6 +14,8 @@ Structure:
 
 IF N = 1: ignore the multi-page structure above. Instead design ONE complete, self-contained standalone post — a full graphic with a strong headline, brief supporting copy, the key visual/subject, and a clear CTA — all in the exact brand style of the reference.
 
+IMAGERY SAFETY (critical — OpenAI will REJECT graphic images): NEVER depict blood, feces/stool, vomit, wounds, injuries, surgery, or any graphic/medical imagery on ANY page, even when the topic is medical. The photo subject is ALWAYS a calm, healthy, appealing pet (or a clean, friendly clinic scene). Keep all medical specifics in the TEXT/headline only — the imagery stays gentle, positive, and brand-safe. (e.g. topic "blood in cat stool" → show a healthy, content cat, with the concern conveyed by words, not visuals.)
+
 You may also be given a BRAND KIT (exact hex colors + brand rules/voice/layout do's and don'ts). When present, EVERY page's edit prompt MUST use those EXACT hex colors, obey the layout do's/don'ts (e.g. left-align headlines, never right-align, keep white space), match the voice, and reproduce the brand's signature elements. All pages are PORTRAIT 4:5 vertical Instagram format — state "portrait 4:5 vertical Instagram layout" in each prompt.
 
 For EACH page, write a complete, standalone GPT Image 2 edit prompt that recreates the reference's EXACT layout, color scheme, fonts, logo placement, and design structure, but with that page's specific headline text and subject/photo. Keep every brand element identical across all pages so they read as ONE cohesive set. Spell every word exactly right. Keep headlines short and punchy (a carousel, not paragraphs).
@@ -56,7 +58,7 @@ function buildEditForm(prompt, refImages, size, quality) {
 // serverless time limit (so the client never sees a "Failed to fetch" timeout). If it can't
 // finish in budget it throws RATE_LIMIT, and the front-end retries that whole carousel later.
 async function genImage(prompt, refImages, size, quality, oKey) {
-  const deadline = Date.now() + 220000; // safely under Vercel's 300s function cap
+  const deadline = Date.now() + 90000; // fail fast & return quickly; the front-end owns the longer pacing
   let lastErr = '';
   for (let attempt = 0; ; attempt++) {
     const r = await fetch('https://api.openai.com/v1/images/edits', {
@@ -70,11 +72,14 @@ async function genImage(prompt, refImages, size, quality, oKey) {
       return b64;
     }
     const t = await r.text();
-    lastErr = t.slice(0, 200);
-    if (r.status !== 429) throw new Error('gpt-image-2 render failed: ' + lastErr);
-    const ra = parseInt(r.headers.get('retry-after') || '0', 10);
-    const waitMs = ra > 0 ? Math.min(40000, ra * 1000) : Math.min(30000, 10000 + attempt * 8000);
-    if (Date.now() + waitMs + 30000 > deadline) throw new Error('RATE_LIMIT'); // bail cleanly; front-end will retry
+    lastErr = t.slice(0, 300);
+    if (r.status !== 429) {
+      if (/moderation_blocked|safety system|content_policy/i.test(lastErr))
+        throw new Error('MODERATION_BLOCKED: OpenAI blocked this image for graphic/medical content. Soften the visual — avoid depicting blood, stool, vomit, wounds or injuries; describe a calm pet instead.');
+      throw new Error('gpt-image-2 render failed: ' + lastErr);
+    }
+    const waitMs = 12000; // one short in-call retry to smooth over a brief spike
+    if (Date.now() + waitMs + 25000 > deadline) throw new Error('RATE_LIMIT'); // bail fast; front-end paces & retries
     await new Promise(res => setTimeout(res, waitMs));
   }
 }
