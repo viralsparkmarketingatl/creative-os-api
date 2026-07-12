@@ -37,7 +37,7 @@ function stripHtml(html) {
     .replace(/\s+/g, ' ').trim();
 }
 
-async function genImage(prompt, refImages, size, quality, oKey) {
+function buildEditForm(prompt, refImages, size, quality) {
   const form = new FormData();
   form.append('model', 'gpt-image-2');
   form.append('prompt', prompt);
@@ -49,14 +49,34 @@ async function genImage(prompt, refImages, size, quality, oKey) {
     const ext = p.media.includes('jpeg') ? 'jpg' : (p.media.includes('webp') ? 'webp' : 'png');
     form.append('image[]', new Blob([buf], { type: p.media }), 'reference' + idx + '.' + ext);
   });
-  const r = await fetch('https://api.openai.com/v1/images/edits', {
-    method: 'POST', headers: { Authorization: 'Bearer ' + oKey }, body: form
-  });
-  if (!r.ok) { const t = await r.text(); throw new Error('gpt-image-2 render failed: ' + t.slice(0, 200)); }
-  const d = await r.json();
-  const b64 = d && d.data && d.data[0] && d.data[0].b64_json;
-  if (!b64) throw new Error('no image returned');
-  return b64;
+  return form;
+}
+
+// Renders one image, auto-retrying on 429 rate limits (OpenAI caps gpt-image-2 edits per minute).
+async function genImage(prompt, refImages, size, quality, oKey) {
+  let lastErr = '';
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const r = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + oKey },
+      body: buildEditForm(prompt, refImages, size, quality)
+    });
+    if (r.ok) {
+      const d = await r.json();
+      const b64 = d && d.data && d.data[0] && d.data[0].b64_json;
+      if (!b64) throw new Error('no image returned');
+      return b64;
+    }
+    const t = await r.text();
+    lastErr = t.slice(0, 200);
+    if (r.status === 429) {
+      const ra = parseInt(r.headers.get('retry-after') || '0', 10);
+      const waitMs = ra > 0 ? Math.min(65000, ra * 1000) : Math.min(65000, 15000 + attempt * 12000);
+      await new Promise(res => setTimeout(res, waitMs));
+      continue;
+    }
+    throw new Error('gpt-image-2 render failed: ' + lastErr);
+  }
+  throw new Error('gpt-image-2 rate-limited after retries (try fewer at once, or raise your OpenAI tier): ' + lastErr);
 }
 
 module.exports = async function handler(req, res) {
@@ -133,11 +153,13 @@ module.exports = async function handler(req, res) {
     }
     if (!Array.isArray(plan) || !plan.length) return res.status(502).json({ error: 'Empty carousel plan.' });
 
-    // ---------- STEP 2: render every page IN PARALLEL ----------
-    const results = await Promise.all(plan.map(async (pg, idx) => {
+    // ---------- STEP 2: render pages SEQUENTIALLY (spaces requests under OpenAI's per-minute image cap) ----------
+    const results = [];
+    for (let idx = 0; idx < plan.length; idx++) {
+      const pg = plan[idx];
       const b64 = await genImage(pg.prompt, refImages, size, quality, oKey);
-      return { page: pg.page || idx + 1, role: pg.role || '', headline: pg.headline || '', prompt: pg.prompt || '', b64 };
-    }));
+      results.push({ page: pg.page || idx + 1, role: pg.role || '', headline: pg.headline || '', prompt: pg.prompt || '', b64 });
+    }
 
     return res.status(200).json({ pages: results });
   } catch (e) {
