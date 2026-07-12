@@ -158,15 +158,19 @@ module.exports = async function handler(req, res) {
     }
     if (!Array.isArray(plan) || !plan.length) return res.status(502).json({ error: 'Empty carousel plan.' });
 
-    // ---------- STEP 2: render pages SEQUENTIALLY (spaces requests under OpenAI's per-minute image cap) ----------
-    const results = [];
-    for (let idx = 0; idx < plan.length; idx++) {
-      const pg = plan[idx];
-      const b64 = await genImage(pg.prompt, refImages, size, quality, oKey);
-      results.push({ page: pg.page || idx + 1, role: pg.role || '', headline: pg.headline || '', prompt: pg.prompt || '', b64 });
+    // ---------- STEP 2: render pages IN PARALLEL (Tier 2 = 20 imgs/min gives comfortable headroom) ----------
+    // Promise.allSettled KEEPS every page that succeeds even if one fails — no billed page is ever discarded.
+    const settled = await Promise.allSettled(plan.map((pg, idx) =>
+      genImage(pg.prompt, refImages, size, quality, oKey).then(b64 => ({
+        page: pg.page || idx + 1, role: pg.role || '', headline: pg.headline || '', prompt: pg.prompt || '', b64
+      }))
+    ));
+    const results = settled.filter(s => s.status === 'fulfilled').map(s => s.value).sort((a, b) => (a.page || 0) - (b.page || 0));
+    const failures = settled.filter(s => s.status === 'rejected').map(s => (s.reason && s.reason.message) || 'render failed');
+    if (!results.length) {
+      return res.status(502).json({ error: failures[0] || 'no pages rendered' });
     }
-
-    return res.status(200).json({ pages: results });
+    return res.status(200).json({ pages: results, partial: results.length < plan.length, pageError: failures[0] || '' });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'server error' });
   }
