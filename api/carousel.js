@@ -10,7 +10,7 @@ const PLAN_SYSTEM =
 Structure:
 - Page 1 = the HOOK / intro — a scroll-stopping title page in the EXACT style of the reference (same layout, colors, fonts, logo, subject treatment).
 - Middle pages = the VALUE — the actual tips / causes / steps from the blog, ONE clear idea per page, same brand style.
-- Last page = the WRAP-UP / CTA — a closing page (short recap + a clear call to action such as "Book an appointment" or "See a vet").
+- Last page = the WRAP-UP / CTA — a closing page (short recap + the brand's OWN call to action). If a CALL-TO-ACTION is provided in the brand kit below, the final page MUST use THAT exact call to action (the brand's real booking/action, address, phone, tagline). NEVER invent a generic CTA like "see a vet" and NEVER copy a CTA from the source blog/topic (it may belong to a different company). The topic/blog is only for the informational content — the CTA always belongs to this brand.
 
 IF N = 1: ignore the multi-page structure above. Instead design ONE complete, self-contained standalone post — a full graphic with a strong headline, brief supporting copy, the key visual/subject, and a clear CTA — all in the exact brand style of the reference.
 
@@ -82,7 +82,8 @@ module.exports = async function handler(req, res) {
     const brandBlock = (brand.name ? ('BRAND: ' + brand.name + '\n') : '')
       + styleLine
       + (colorsLine ? ('FULL BRAND PALETTE (for reference): ' + colorsLine + '\n') : '')
-      + (brand.guidelines ? ('BRAND GUIDELINES:\n' + brand.guidelines) : '');
+      + (brand.guidelines ? ('BRAND GUIDELINES:\n' + brand.guidelines) : '')
+      + (brand.cta ? ('\n\nBRAND CALL-TO-ACTION (use on the final/CTA page EXACTLY — overrides any CTA from the source topic/blog):\n' + brand.cta) : '');
     const size = body.size || '1024x768';
     const quality = body.quality || 'high';
     let pages = parseInt(body.pages, 10); if (!pages || pages < 2) pages = 3; if (pages > 6) pages = 6;

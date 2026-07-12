@@ -40,7 +40,8 @@ module.exports = async function handler(req, res) {
     const brandBlock = (brand.name ? ('BRAND: ' + brand.name + '\n') : '')
       + styleLine
       + (colorsLine ? ('FULL BRAND PALETTE (for reference): ' + colorsLine + '\n') : '')
-      + (brand.guidelines ? ('BRAND GUIDELINES:\n' + brand.guidelines) : '');
+      + (brand.guidelines ? ('BRAND GUIDELINES:\n' + brand.guidelines) : '')
+      + (brand.cta ? ('\n\nBRAND CALL-TO-ACTION (if the graphic includes a call to action, use THIS exactly — never a generic or competitor CTA):\n' + brand.cta) : '');
     const size = body.size || '1024x768';
     const quality = body.quality || 'high';
     const refImages = (Array.isArray(body.refImages) && body.refImages.length)
