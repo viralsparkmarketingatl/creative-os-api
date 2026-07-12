@@ -52,10 +52,13 @@ function buildEditForm(prompt, refImages, size, quality) {
   return form;
 }
 
-// Renders one image, auto-retrying on 429 rate limits (OpenAI caps gpt-image-2 edits per minute).
+// Renders one image, briefly retrying on 429 rate limits — but ALWAYS returns before the
+// serverless time limit (so the client never sees a "Failed to fetch" timeout). If it can't
+// finish in budget it throws RATE_LIMIT, and the front-end retries that whole carousel later.
 async function genImage(prompt, refImages, size, quality, oKey) {
+  const deadline = Date.now() + 220000; // safely under Vercel's 300s function cap
   let lastErr = '';
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     const r = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST', headers: { Authorization: 'Bearer ' + oKey },
       body: buildEditForm(prompt, refImages, size, quality)
@@ -68,15 +71,12 @@ async function genImage(prompt, refImages, size, quality, oKey) {
     }
     const t = await r.text();
     lastErr = t.slice(0, 200);
-    if (r.status === 429) {
-      const ra = parseInt(r.headers.get('retry-after') || '0', 10);
-      const waitMs = ra > 0 ? Math.min(65000, ra * 1000) : Math.min(65000, 15000 + attempt * 12000);
-      await new Promise(res => setTimeout(res, waitMs));
-      continue;
-    }
-    throw new Error('gpt-image-2 render failed: ' + lastErr);
+    if (r.status !== 429) throw new Error('gpt-image-2 render failed: ' + lastErr);
+    const ra = parseInt(r.headers.get('retry-after') || '0', 10);
+    const waitMs = ra > 0 ? Math.min(40000, ra * 1000) : Math.min(30000, 10000 + attempt * 8000);
+    if (Date.now() + waitMs + 30000 > deadline) throw new Error('RATE_LIMIT'); // bail cleanly; front-end will retry
+    await new Promise(res => setTimeout(res, waitMs));
   }
-  throw new Error('gpt-image-2 rate-limited after retries (try fewer at once, or raise your OpenAI tier): ' + lastErr);
 }
 
 module.exports = async function handler(req, res) {
