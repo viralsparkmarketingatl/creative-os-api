@@ -25,7 +25,8 @@ COLOR PAIRING SYSTEM (this is how the set stays cohesive — follow it exactly w
 - If N is not 8, cover as many distinct brand pairings as N allows, still balancing color-dominant and white-flip.
 
 Rules:
-- Pull the EXACT hex colors, fonts, logo, voice, and identity from the brand kit PDF and use them precisely.
+- LOGO: a dedicated logo reference image is provided (usually the FIRST reference, a transparent PNG). EVERY poster MUST include the brand's ACTUAL logo, reproduced EXACTLY from that reference — do not redraw, recolor, distort or invent it. Place it cleanly in a corner (bottom-left works well) at a tasteful size, and pick the logo color/version that stays legible on that poster's background.
+- Pull the EXACT hex colors, fonts, voice, and identity from the brand kit PDF and use them precisely.
 - Each poster is a DIFFERENT relevant topic for the brand's business — vary topics so the set is a versatile template library.
 - Across the 8, vary composition, layout, and featured subject — but keep each one locked to its assigned color pairing above.
 - Expert use of blending, gradients, feathering, masking, negative space and attention-guiding composition.
@@ -95,15 +96,19 @@ module.exports = async function handler(req, res) {
     const pdfB64 = (body.pdf || '').replace(/^data:[^,]*,/, '');
     const brandText = (body.brandText || '').trim(); // optional pasted hex/identity if no PDF
     const extra = (body.extra || '').trim();
+    const logo = (body.logo || '').trim();
     const size = body.size || '1024x1536';
     const quality = body.quality || 'high';
     let count = parseInt(body.count, 10); if (!count || count < 1) count = 8; if (count > 8) count = 8;
     const refImages = (Array.isArray(body.refImages) ? body.refImages : []).filter(Boolean);
-    if (!pdfB64 && !brandText && !refImages.length) return res.status(400).json({ error: 'Provide a brand-kit PDF, and/or pasted brand details, and/or reference images.' });
+    // logo goes FIRST so the model treats it as the brand mark to reproduce, then the inspiration images
+    const genRefs = (logo ? [logo] : []).concat(refImages);
+    if (!pdfB64 && !brandText && !refImages.length && !logo) return res.status(400).json({ error: 'Provide a brand-kit PDF, and/or pasted brand details, a logo, and/or reference images.' });
 
-    // ---------- STEP 1: Claude reads the PDF + inspiration images, writes N prompts ----------
+    // ---------- STEP 1: Claude reads the logo + PDF + inspiration images, writes N prompts ----------
     const content = [];
     if (pdfB64) content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfB64 } });
+    if (logo) { const lp = parseDataUrl(logo); content.push({ type: 'image', source: { type: 'base64', media_type: lp.media, data: lp.b64 } }); content.push({ type: 'text', text: 'The image above is the brand LOGO — every poster must reproduce it exactly and place it cleanly.' }); }
     refImages.slice(0, 8).forEach(u => {
       const p = parseDataUrl(u);
       content.push({ type: 'image', source: { type: 'base64', media_type: p.media, data: p.b64 } });
@@ -129,7 +134,7 @@ module.exports = async function handler(req, res) {
 
     // ---------- STEP 2: render each poster (parallel, keep every success) ----------
     const settled = await Promise.allSettled(prompts.slice(0, count).map(p =>
-      genImage(String(p), refImages, size, quality, oKey).then(b64 => ({ prompt: String(p), b64 }))
+      genImage(String(p), genRefs, size, quality, oKey).then(b64 => ({ prompt: String(p), b64 }))
     ));
     const images = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
     const failures = settled.filter(s => s.status === 'rejected').map(s => (s.reason && s.reason.message) || 'render failed');
