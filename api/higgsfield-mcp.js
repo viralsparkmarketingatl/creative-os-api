@@ -184,6 +184,122 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ id, status: 'queued', raw: p });
     }
 
+    // ---- avatar_train (Soul) ----  train a reusable identity from 5-20 photo URLs
+    if (action === 'avatar_train') {
+      const name = (body.name || '').trim();
+      let urls = Array.isArray(body.imageUrls) ? body.imageUrls.filter(u => /^https?:\/\//i.test(u)) : [];
+      if (!name) return res.status(400).json({ error: 'avatar needs a name' });
+      if (urls.length < 5) return res.status(400).json({ error: 'need at least 5 photos to train an avatar (5-20)' });
+      if (urls.length > 20) urls = urls.slice(0, 20);
+      const type = body.avatarType === 'soul_cinematic' ? 'soul_cinematic' : 'soul_2';
+      const { p, raw } = await callTool(at, sid, 'show_characters', { action: 'train', name, images: urls, type });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      const soulId = deepFind(p, ['soul_id', 'character_id', 'id']) || (hay.match(UUID_RE) || [])[0] || '';
+      if (!soulId) return res.status(502).json({ error: 'no soul_id returned from training', raw: p });
+      return res.status(200).json({ soul_id: soulId, status: 'training' });
+    }
+
+    // ---- avatar_status ----  poll a Soul's training status
+    if (action === 'avatar_status') {
+      const soulId = (body.soul_id || '').trim();
+      if (!soulId) return res.status(400).json({ error: 'missing soul_id' });
+      const { p, raw } = await callTool(at, sid, 'show_characters', { action: 'status', soul_id: soulId });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      let status = (hay.match(/\b(ready|training|failed|in_progress|processing|queued|completed|pending)\b/i) || [])[1] || 'training';
+      status = status.toLowerCase();
+      if (status === 'completed') status = 'ready';
+      return res.status(200).json({ status, soul_id: soulId, raw: p });
+    }
+
+    // ---- avatar_image ----  generate a still USING a trained Soul avatar
+    if (action === 'avatar_image') {
+      const soulId = (body.soul_id || '').trim();
+      const prompt = (body.prompt || '').trim();
+      if (!soulId) return res.status(400).json({ error: 'missing soul_id' });
+      if (!prompt) return res.status(400).json({ error: 'missing prompt' });
+      const model = body.model === 'soul_cinema_studio' ? 'soul_cinema_studio' : 'soul_2';
+      const iparams = { model, soul_id: soulId, prompt };
+      if (body.aspect_ratio) iparams.aspect_ratio = body.aspect_ratio;
+      const { p, raw } = await callTool(at, sid, 'generate_image', { params: iparams });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      const url = pickUrl(p) || (hay.match(MEDIA_URL_RE) || [])[0] || '';
+      const id = pickId(p) || (hay.match(UUID_RE) || [])[0] || '';
+      if (url) return res.status(200).json({ id: id || '', status: 'completed', url });
+      if (!id) return res.status(502).json({ error: 'no job id from generate_image', raw: p });
+      return res.status(200).json({ id, status: 'queued', raw: p });
+    }
+
+    // ---- voices_list ----  preset + cloned voices for the talking spokesperson
+    if (action === 'voices_list') {
+      const { p, raw } = await callTool(at, sid, 'list_voices', { size: 100 });
+      const out = []; const seen = new Set();
+      const walk = (o) => {
+        if (!o || typeof o !== 'object') return;
+        if (Array.isArray(o)) { o.forEach(walk); return; }
+        const id = o.voice_id || o.id; const name = o.name || o.display_name;
+        if (id && name && !seen.has(id)) { seen.add(id); out.push({ voice_id: id, name: String(name), voice_type: o.voice_type || 'preset' }); }
+        Object.values(o).forEach(walk);
+      };
+      walk(p);
+      if (p && p.text) { try { walk(JSON.parse(p.text)); } catch (e) {} }
+      return res.status(200).json({ voices: out });
+    }
+
+    // ---- voice_clone ----  clone a voice from a public audio URL (10s-3min)
+    if (action === 'voice_clone') {
+      const name = (body.name || '').trim();
+      const audioUrl = (body.audioUrl || '').trim();
+      if (!name) return res.status(400).json({ error: 'voice needs a name' });
+      if (!/^https?:\/\//i.test(audioUrl)) return res.status(400).json({ error: 'voice_clone needs a public audio URL' });
+      const imp = await callTool(at, sid, 'media_import_url', { url: audioUrl, type: 'audio' });
+      const impHay = (imp.p && imp.p.text ? imp.p.text : '') + ' ' + JSON.stringify(imp.p) + ' ' + imp.raw;
+      const audioId = deepFind(imp.p, ['media_id', 'id']) || (impHay.match(UUID_RE) || [])[0] || '';
+      if (!audioId) return res.status(502).json({ error: 'could not import that audio', raw: imp.p });
+      const { p, raw } = await callTool(at, sid, 'create_voice_from_confirmed_audio', { audio_media_id: audioId, name });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      const voiceId = deepFind(p, ['voice_id', 'id']) || (hay.match(UUID_RE) || [])[0] || '';
+      if (!voiceId) return res.status(502).json({ error: 'no voice_id returned from clone', raw: p });
+      let status = (hay.match(/\b(completed|processing|ready|failed|voice_clone_failed)\b/i) || [])[1] || 'processing';
+      return res.status(200).json({ voice_id: voiceId, voice_type: 'element', status: status.toLowerCase() });
+    }
+
+    // ---- talk_audio ----  text-to-speech from a script -> audio job (feeds talk_video)
+    if (action === 'talk_audio') {
+      const script = (body.script || '').trim();
+      const voiceId = (body.voice_id || '').trim();
+      const voiceType = body.voice_type === 'element' ? 'element' : 'preset';
+      if (!script) return res.status(400).json({ error: 'missing script' });
+      if (!voiceId) return res.status(400).json({ error: 'missing voice_id' });
+      const aparams = { model: 'seed_audio', prompt: script, voice_type: voiceType, voice_id: voiceId };
+      const { p, raw } = await callTool(at, sid, 'generate_audio', { params: aparams });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      const id = pickId(p) || (hay.match(UUID_RE) || [])[0] || '';
+      if (!id) return res.status(502).json({ error: 'no job id from generate_audio', raw: p });
+      return res.status(200).json({ id, status: 'queued' });
+    }
+
+    // ---- talk_video ----  spokesperson image + generated audio -> lip-synced talking video (Wan 2.7)
+    if (action === 'talk_video') {
+      const audioId = (body.audioId || '').trim();
+      if (!audioId) return res.status(400).json({ error: 'missing audioId (from talk_audio)' });
+      let imageId = (body.imageId || '').trim();
+      if (!imageId && body.imageUrl && /^https?:\/\//i.test(body.imageUrl)) {
+        const imp = await callTool(at, sid, 'media_import_url', { url: body.imageUrl, type: 'image' });
+        const impHay = (imp.p && imp.p.text ? imp.p.text : '') + ' ' + JSON.stringify(imp.p) + ' ' + imp.raw;
+        imageId = deepFind(imp.p, ['media_id', 'id']) || (impHay.match(UUID_RE) || [])[0] || '';
+      }
+      if (!imageId) return res.status(400).json({ error: 'talk_video needs a spokesperson image (imageUrl or imageId)' });
+      const model = body.model || 'wan2_7';
+      const vparams = { model, medias: [{ role: 'start_image', value: imageId }, { role: 'audio_references', value: audioId }] };
+      if (body.aspect_ratio) vparams.aspect_ratio = body.aspect_ratio;
+      if (body.prompt) vparams.prompt = body.prompt;
+      const { p, raw } = await callTool(at, sid, 'generate_video', { params: vparams });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      const id = pickId(p) || (hay.match(UUID_RE) || [])[0] || '';
+      if (!id) return res.status(502).json({ error: 'no job id from talk_video', raw: p });
+      return res.status(200).json({ id, status: 'queued', raw: p });
+    }
+
     // ---- submit ----  (text-to-video, or image-to-video when an image URL / media id is given)
     let prompt = (body.prompt || '').trim();
     const hasImage = !!((body.mediaId || '').trim() || (body.imageUrl && /^https?:\/\//i.test(body.imageUrl)));
