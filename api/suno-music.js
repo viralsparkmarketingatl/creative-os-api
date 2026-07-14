@@ -60,6 +60,37 @@ module.exports = async function handler(req, res) {
       const instrumental = body.instrumental !== false && !lyrics;
       if (!style && !lyrics) return res.status(400).json({ error: 'need a style or lyrics' });
 
+      // ---- Suno reference audio: upload the clip -> extend it (Suno's "Upload Audio" flow) ----
+      if (model === 'suno' && body.refAudio) {
+        const m = /^data:([^;]+);base64,(.*)$/s.exec(body.refAudio);
+        const mime = m ? m[1] : 'audio/mpeg';
+        const b64 = m ? m[2] : String(body.refAudio).replace(/^data:[^,]*,/, '');
+        const buf = Buffer.from(b64, 'base64');
+        if (!buf.length) return res.status(400).json({ error: 'reference audio decoded to 0 bytes' });
+        if (buf.length > 10 * 1024 * 1024) return res.status(413).json({ error: 'reference audio must be ≤10MB for Suno upload' });
+        // 1) upload (multipart) -> parent task
+        const form = new FormData();
+        const ext = mime.includes('wav') ? 'wav' : (mime.includes('mp4') || mime.includes('m4a') ? 'm4a' : 'mp3');
+        form.append('audio', new Blob([buf], { type: mime }), 'reference.' + ext);
+        const upR = await fetch(base + '/suno-upload', { method: 'POST', headers: { Authorization: key }, body: form });
+        const upTxt = await upR.text(); let upD; try { upD = JSON.parse(upTxt); } catch (e) { upD = {}; }
+        if (!upR.ok) return res.status(502).json({ error: 'Suno upload failed (' + upR.status + '): ' + upTxt.slice(0, 300) });
+        const parent = pick(upD, ['task_id', 'taskId', 'id']);
+        if (!parent) return res.status(502).json({ error: 'no task id from suno-upload', raw: upD });
+        // 2) extend it with the crafted prompt/style
+        const exPayload = { parent_task_id: parent, model: body.sunoModel || 'V4_5', prompt: style || title || 'continue this' };
+        if (title) exPayload.title = title;
+        if (style) exPayload.tags = style;
+        if (lyrics) exPayload.lyrics = lyrics;
+        if (typeof body.continue_at === 'number') exPayload.continue_at = body.continue_at;
+        const exR = await fetch(base + '/suno-extend', { method: 'POST', headers: { Authorization: key, 'Content-Type': 'application/json' }, body: JSON.stringify(exPayload) });
+        const exTxt = await exR.text(); let exD; try { exD = JSON.parse(exTxt); } catch (e) { exD = {}; }
+        if (!exR.ok) return res.status(502).json({ error: 'Suno extend failed (' + exR.status + '): ' + exTxt.slice(0, 300) });
+        const exId = pick(exD, ['task_id', 'taskId', 'id']);
+        if (!exId) return res.status(502).json({ error: 'no task id from suno-extend', raw: exD });
+        return res.status(200).json({ id: exId, poll: 'v1' });
+      }
+
       // Unified v2 takes a single prompt (1–5000 chars). Fold intent into it, plus best-effort fields.
       let prompt = style || title || 'a song';
       if (instrumental && !/instrumental/i.test(prompt)) prompt += ', instrumental, no vocals';
@@ -74,13 +105,19 @@ module.exports = async function handler(req, res) {
       }
       const id = pick(d, ['jobId', 'job_id', 'task_id', 'taskId', 'id']);
       if (!id) return res.status(502).json({ error: 'no job id from Apiframe', raw: d });
-      return res.status(200).json({ id });
+      return res.status(200).json({ id, poll: 'v2' });
     }
 
     if (action === 'status') {
       const id = (body.id || '').trim();
       if (!id) return res.status(400).json({ error: 'missing id' });
-      const r = await fetch(base + '/v2/jobs/' + encodeURIComponent(id), { method: 'GET', headers });
+      let r;
+      if (body.poll === 'v1') {
+        // Suno extend/upload flow uses the v1 poll endpoint
+        r = await fetch(base + '/fetch', { method: 'POST', headers, body: JSON.stringify({ task_id: id }) });
+      } else {
+        r = await fetch(base + '/v2/jobs/' + encodeURIComponent(id), { method: 'GET', headers });
+      }
       const txt = await r.text(); let d; try { d = JSON.parse(txt); } catch (e) { d = {}; }
       if (!r.ok) return res.status(502).json({ error: 'Apiframe job fetch failed (' + r.status + '): ' + txt.slice(0, 300) });
       const tracks = collectTracks(d);
