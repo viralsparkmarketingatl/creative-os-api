@@ -10,14 +10,47 @@ const TOKEN_ENDPOINT = 'https://mcp.higgsfield.ai/oauth2/token';
 const MCP_URL = 'https://mcp.higgsfield.ai/mcp';
 const CLIENT_ID = process.env.HIGGS_CLIENT_ID || 'qmL4zyxg5skJLOml';
 
+// ---- KV (Vercel KV / Upstash Redis REST) — stores the ROTATING refresh token + a cached access token ----
+function kvCfg() {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
+  return (url && token) ? { url: url.replace(/\/$/, ''), token } : null;
+}
+async function kvGet(key) {
+  const c = kvCfg(); if (!c) return null;
+  try {
+    const r = await fetch(c.url + '/get/' + encodeURIComponent(key), { headers: { Authorization: 'Bearer ' + c.token } });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return (d && d.result != null) ? d.result : null;
+  } catch (e) { return null; }
+}
+async function kvSet(key, val) {
+  const c = kvCfg(); if (!c) return false;
+  try {
+    const r = await fetch(c.url + '/set/' + encodeURIComponent(key), { method: 'POST', headers: { Authorization: 'Bearer ' + c.token, 'Content-Type': 'text/plain' }, body: String(val) });
+    return r.ok;
+  } catch (e) { return false; }
+}
+
 async function getAccessToken() {
-  const rt = process.env.HIGGS_REFRESH_TOKEN;
-  if (!rt) throw new Error('HIGGS_REFRESH_TOKEN is not set in Vercel.');
+  const now = Date.now();
+  // reuse a still-valid cached access token so we don't rotate the refresh token on every poll
+  const cached = await kvGet('higgs_access_token');
+  const exp = parseInt(await kvGet('higgs_access_expiry') || '0', 10);
+  if (cached && exp > now + 60000) return cached;
+
+  const rt = (await kvGet('higgs_refresh_token')) || process.env.HIGGS_REFRESH_TOKEN;
+  if (!rt) throw new Error('No refresh token available (KV empty and HIGGS_REFRESH_TOKEN unset). Re-run /api/higgs-auth.');
   const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: CLIENT_ID });
   const r = await fetch(TOKEN_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
   const txt = await r.text();
   let d; try { d = JSON.parse(txt); } catch (e) { d = {}; }
   if (!r.ok || !d.access_token) throw new Error('token refresh failed (' + r.status + '): ' + txt.slice(0, 200));
+  // persist the ROTATED refresh token immediately, plus cache the access token
+  if (d.refresh_token) await kvSet('higgs_refresh_token', d.refresh_token);
+  await kvSet('higgs_access_token', d.access_token);
+  await kvSet('higgs_access_expiry', String(now + ((d.expires_in || 3600) * 1000)));
   return d.access_token;
 }
 

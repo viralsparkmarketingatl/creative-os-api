@@ -17,6 +17,18 @@ function parseCookies(h) {
   return o;
 }
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function kvCfg() {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
+  return (url && token) ? { url: url.replace(/\/$/, ''), token } : null;
+}
+async function kvSet(key, val) {
+  const c = kvCfg(); if (!c) return false;
+  try {
+    const r = await fetch(c.url + '/set/' + encodeURIComponent(key), { method: 'POST', headers: { Authorization: 'Bearer ' + c.token, 'Content-Type': 'text/plain' }, body: String(val) });
+    return r.ok;
+  } catch (e) { return false; }
+}
 function page(res, html) {
   res.statusCode = 200;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -59,13 +71,23 @@ module.exports = async function handler(req, res) {
       return page(res, '<h2>Token exchange did not return a refresh token</h2><p>Raw response (share this with Claude — it is NOT a secret if there is no token):</p><pre style="white-space:pre-wrap">' + esc(txt.slice(0, 1800)) + '</pre>');
     }
 
+    // store the refresh token straight into KV (handles rotation automatically); wipe any stale cached access token
+    const saved = await kvSet('higgs_refresh_token', d.refresh_token);
+    await kvSet('higgs_access_expiry', '0');
+
+    if (saved) {
+      return page(res,
+        '<h2>✅ Connected to Higgsfield</h2>' +
+        '<p>Your login was saved securely to the backend (KV). <b>Nothing to copy.</b></p>' +
+        '<p>Go tell Claude <b>"connected"</b> and it will generate a video on your existing credits.</p>'
+      );
+    }
+    // KV not configured yet — fall back to manual env var
     return page(res,
-      '<h2>✅ Connected to Higgsfield</h2>' +
-      '<p><b>Copy the refresh token below</b> and paste it into Vercel as an environment variable named <code>HIGGS_REFRESH_TOKEN</code> on the <b>creative-os-api</b> project.</p>' +
-      '<p style="color:#b00"><b>Do NOT paste this token into the chat.</b> It is a password to your Higgsfield credits — Vercel env var only.</p>' +
+      '<h2>✅ Connected — one more setup step</h2>' +
+      '<p>KV storage isn\'t set up yet, so save this <b>refresh token</b> into Vercel env var <code>HIGGS_REFRESH_TOKEN</code> (creative-os-api). <b>Do NOT paste it into chat.</b></p>' +
       '<textarea readonly style="width:100%;height:130px;font-family:monospace;font-size:12px" onclick="this.select()">' + esc(d.refresh_token) + '</textarea>' +
-      '<p style="color:#888;font-size:13px">Scope: ' + esc(d.scope || '(none returned)') + ' · expires_in: ' + esc(String(d.expires_in || '?')) + 's</p>' +
-      '<p>Once it is saved in Vercel, tell Claude "token is saved" and it will test video generation on your existing credits.</p>'
+      '<p style="color:#888;font-size:13px">Note: without KV, it will stop working after the first use (token rotation). Setting up KV is strongly recommended.</p>'
     );
   } catch (e) {
     return page(res, '<h2>Error</h2><pre>' + esc(e.message) + '</pre>');
