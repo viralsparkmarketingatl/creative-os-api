@@ -18,6 +18,12 @@
     "api/bunny-upload.js": {
       "maxDuration": 60
     },
+    "api/buffer-publish.js": {
+      "maxDuration": 60
+    },
+    "api/caption.js": {
+      "maxDuration": 60
+    },
     "api/brandkit-styles.js": {
       "maxDuration": 300
     }
