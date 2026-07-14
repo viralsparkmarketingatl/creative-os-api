@@ -15,6 +15,9 @@
     "api/higgsfield-video.js": {
       "maxDuration": 60
     },
+    "api/bunny-upload.js": {
+      "maxDuration": 60
+    },
     "api/brandkit-styles.js": {
       "maxDuration": 300
     }
