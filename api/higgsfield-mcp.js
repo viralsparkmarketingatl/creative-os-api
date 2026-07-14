@@ -263,6 +263,22 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ voice_id: voiceId, voice_type: 'element', status: status.toLowerCase() });
     }
 
+    // ---- tts ----  standalone text-to-speech with a selectable engine (Vibe Voice, Seed Speech, ElevenLabs, MiniMax, Cozy Voice)
+    if (action === 'tts') {
+      const text = (body.text || '').trim();
+      const variant = body.variant || 'vibe_voice';
+      const voiceId = (body.voice_id || '').trim();
+      const voiceType = body.voice_type === 'element' ? 'element' : 'preset';
+      if (!text) return res.status(400).json({ error: 'missing text' });
+      if (!voiceId) return res.status(400).json({ error: 'pick a voice first' });
+      const aparams = { model: 'text2speech_v2', prompt: text, variant, voice_type: voiceType, voice_id: voiceId };
+      const { p, raw } = await callTool(at, sid, 'generate_audio', { params: aparams });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      const id = pickId(p) || (hay.match(UUID_RE) || [])[0] || '';
+      if (!id) return res.status(502).json({ error: 'no job id from text2speech_v2', raw: p });
+      return res.status(200).json({ id, status: 'queued' });
+    }
+
     // ---- talk_audio ----  text-to-speech from a script -> audio job (feeds talk_video)
     if (action === 'talk_audio') {
       const script = (body.script || '').trim();
