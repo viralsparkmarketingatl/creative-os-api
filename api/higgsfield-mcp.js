@@ -309,14 +309,24 @@ module.exports = async function handler(req, res) {
     const params = { model, prompt };
     if (body.aspect_ratio) params.aspect_ratio = body.aspect_ratio;
     if (body.duration) params.duration = body.duration;
-    // image-to-video: use a passed media id, or import a PUBLIC image URL -> media_id (Cloudinary etc.)
-    let mediaId = (body.mediaId || '').trim();
-    if (!mediaId && body.imageUrl && /^https?:\/\//i.test(body.imageUrl)) {
-      const imp = await callTool(at, sid, 'media_import_url', { url: body.imageUrl, type: 'image' });
-      const impHay = (imp.p && imp.p.text ? imp.p.text : '') + ' ' + JSON.stringify(imp.p) + ' ' + imp.raw;
-      mediaId = deepFind(imp.p, ['media_id', 'id']) || (impHay.match(UUID_RE) || [])[0] || '';
+    // image-to-video: use a passed media id, or import a PUBLIC image URL -> media_id (Bunny CDN etc.)
+    async function toImageId(id, url) {
+      id = (id || '').trim();
+      if (id) return id;
+      if (url && /^https?:\/\//i.test(url)) {
+        const imp = await callTool(at, sid, 'media_import_url', { url, type: 'image' });
+        const hy = (imp.p && imp.p.text ? imp.p.text : '') + ' ' + JSON.stringify(imp.p) + ' ' + imp.raw;
+        return deepFind(imp.p, ['media_id', 'id']) || (hy.match(UUID_RE) || [])[0] || '';
+      }
+      return '';
     }
-    if (mediaId) params.medias = [{ role: 'start_image', value: mediaId }];
+    const mediaId = await toImageId(body.mediaId, body.imageUrl);
+    // optional END frame (Kling v3.0 / Wan 2.7 / Seedance 2.0 support start_image + end_image)
+    const endId = await toImageId(body.endMediaId, body.endImageUrl);
+    const medias = [];
+    if (mediaId) medias.push({ role: 'start_image', value: mediaId });
+    if (endId) medias.push({ role: 'end_image', value: endId });
+    if (medias.length) params.medias = medias;
     if (body.extraParams && typeof body.extraParams === 'object') Object.assign(params, body.extraParams);
 
     const { p, raw } = await callTool(at, sid, 'generate_video', { params });
