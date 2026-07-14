@@ -154,15 +154,53 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ status, url, raw: p });
     }
 
-    // ---- submit ----
-    const prompt = (body.prompt || '').trim();
-    if (!prompt) return res.status(400).json({ error: 'missing prompt' });
+    // ---- motion (Kling 3.0 Motion Control) ----  character still + driving video -> animated clip
+    if (action === 'motion') {
+      // Resolve a character image and a motion video, each from a passed media id or a public URL.
+      async function toMediaId(id, url, type) {
+        id = (id || '').trim();
+        if (id) return id;
+        if (url && /^https?:\/\//i.test(url)) {
+          const imp = await callTool(at, sid, 'media_import_url', { url, type });
+          const hy = (imp.p && imp.p.text ? imp.p.text : '') + ' ' + JSON.stringify(imp.p) + ' ' + imp.raw;
+          return deepFind(imp.p, ['media_id', 'id']) || (hy.match(UUID_RE) || [])[0] || '';
+        }
+        return '';
+      }
+      const imageId = await toMediaId(body.imageId, body.imageUrl, 'image');
+      const motionVideoId = await toMediaId(body.motionVideoId, body.motionVideoUrl, 'video');
+      if (!imageId) return res.status(400).json({ error: 'motion needs a character image (imageUrl or imageId)' });
+      if (!motionVideoId) return res.status(400).json({ error: 'motion needs a driving video (motionVideoUrl or motionVideoId)' });
+      const mparams = {
+        image_id: imageId,
+        motion_video_id: motionVideoId,
+        resolution: body.resolution === '1080p' ? '1080p' : '720p',
+        scene_control: body.scene_control === 'video' ? 'video' : 'image'
+      };
+      const { p, raw } = await callTool(at, sid, 'motion_control', { params: mparams });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      const id = pickId(p) || (hay.match(UUID_RE) || [])[0] || '';
+      if (!id) return res.status(502).json({ error: 'no job id from motion_control', raw: p });
+      return res.status(200).json({ id, status: 'queued', raw: p });
+    }
+
+    // ---- submit ----  (text-to-video, or image-to-video when an image URL / media id is given)
+    let prompt = (body.prompt || '').trim();
+    const hasImage = !!((body.mediaId || '').trim() || (body.imageUrl && /^https?:\/\//i.test(body.imageUrl)));
+    if (!prompt && !hasImage) return res.status(400).json({ error: 'missing prompt' });
+    if (!prompt) prompt = 'Subtle, natural motion with a gentle cinematic camera move; keep it premium and on-brand.';
     const model = body.model || 'kling3_0_turbo';
     const params = { model, prompt };
     if (body.aspect_ratio) params.aspect_ratio = body.aspect_ratio;
     if (body.duration) params.duration = body.duration;
-    // image-to-video: caller passes a media id (from a prior media_import_url/upload) as body.mediaId
-    if (body.mediaId) params.medias = [{ role: 'start_image', value: body.mediaId }];
+    // image-to-video: use a passed media id, or import a PUBLIC image URL -> media_id (Cloudinary etc.)
+    let mediaId = (body.mediaId || '').trim();
+    if (!mediaId && body.imageUrl && /^https?:\/\//i.test(body.imageUrl)) {
+      const imp = await callTool(at, sid, 'media_import_url', { url: body.imageUrl, type: 'image' });
+      const impHay = (imp.p && imp.p.text ? imp.p.text : '') + ' ' + JSON.stringify(imp.p) + ' ' + imp.raw;
+      mediaId = deepFind(imp.p, ['media_id', 'id']) || (impHay.match(UUID_RE) || [])[0] || '';
+    }
+    if (mediaId) params.medias = [{ role: 'start_image', value: mediaId }];
     if (body.extraParams && typeof body.extraParams === 'object') Object.assign(params, body.extraParams);
 
     const { p, raw } = await callTool(at, sid, 'generate_video', { params });
