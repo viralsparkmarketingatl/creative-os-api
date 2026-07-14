@@ -24,6 +24,12 @@
     "api/caption.js": {
       "maxDuration": 60
     },
+    "api/music-prompt.js": {
+      "maxDuration": 60
+    },
+    "api/suno-music.js": {
+      "maxDuration": 60
+    },
     "api/brandkit-styles.js": {
       "maxDuration": 300
     }
