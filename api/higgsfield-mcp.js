@@ -112,12 +112,16 @@ function pickStatus(p) {
 function pickUrl(p) {
   return deepFind(p, ['rawUrl', 'raw_url', 'result_url', 'url', 'uri', 'video_url']);
 }
+// The MCP often returns the job id / status / media URL as plain TEXT, not structured fields — grab them by regex too.
+const UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+const MEDIA_URL_RE = /https?:\/\/[^\s"'\\)]+\.(?:mp4|mov|webm|m4v|jpg|jpeg|png|webp)/i;
+const STATUS_RE = /\b(queued|in_progress|processing|completed|succeeded|failed|nsfw|error)\b/i;
 
 async function callTool(at, sid, name, args) {
   const r = await rpc(at, sid, 'tools/call', { name, arguments: args || {} });
   if (!r.ok) throw new Error('tools/call ' + name + ' failed (' + r.status + '): ' + r.raw.slice(0, 300));
   if (r.data && r.data.error) throw new Error('tool ' + name + ' error: ' + JSON.stringify(r.data.error).slice(0, 300));
-  return toolPayload(r.data);
+  return { p: toolPayload(r.data), raw: r.raw || '' };
 }
 
 module.exports = async function handler(req, res) {
@@ -142,8 +146,12 @@ module.exports = async function handler(req, res) {
     if (action === 'status') {
       const id = (body.id || '').trim();
       if (!id) return res.status(400).json({ error: 'missing id' });
-      const p = await callTool(at, sid, 'job_status', { jobId: id });
-      return res.status(200).json({ status: pickStatus(p) || 'in_progress', url: pickUrl(p), raw: p });
+      const { p, raw } = await callTool(at, sid, 'job_status', { jobId: id });
+      const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+      let status = (hay.match(STATUS_RE) || [])[1] || pickStatus(p) || 'in_progress';
+      status = String(status).toLowerCase(); if (status === 'succeeded') status = 'completed';
+      const url = pickUrl(p) || (hay.match(MEDIA_URL_RE) || [])[0] || '';
+      return res.status(200).json({ status, url, raw: p });
     }
 
     // ---- submit ----
@@ -157,10 +165,11 @@ module.exports = async function handler(req, res) {
     if (body.mediaId) params.medias = [{ role: 'start_image', value: body.mediaId }];
     if (body.extraParams && typeof body.extraParams === 'object') Object.assign(params, body.extraParams);
 
-    const p = await callTool(at, sid, 'generate_video', { params });
-    const id = pickId(p);
+    const { p, raw } = await callTool(at, sid, 'generate_video', { params });
+    const hay = (p && p.text ? p.text : '') + ' ' + JSON.stringify(p) + ' ' + raw;
+    const id = pickId(p) || (hay.match(UUID_RE) || [])[0] || '';
     if (!id) return res.status(502).json({ error: 'no job id from generate_video', raw: p });
-    return res.status(200).json({ id, status: pickStatus(p) || 'queued', raw: p });
+    return res.status(200).json({ id, status: 'queued', raw: p });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'server error' });
   }
