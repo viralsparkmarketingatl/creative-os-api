@@ -93,12 +93,12 @@ module.exports = async function handler(req, res) {
         return res.status(200).json({ id: exId, poll: 'v1' });
       }
 
-      // Unified v2 takes a single prompt (1–5000 chars). Fold intent into it, plus best-effort fields.
+      // Unified v2 validates STRICTLY — only { model, prompt } are accepted (title/lyrics are rejected
+      // as unknown keys). Fold everything into the single prompt (1–5000 chars).
       let prompt = style || title || 'a song';
       if (instrumental && !/instrumental/i.test(prompt)) prompt += ', instrumental, no vocals';
+      if (lyrics) prompt += ' | Lyrics: ' + String(lyrics).replace(/\s+/g, ' ').trim().slice(0, 1500);
       const payload = { model, prompt };
-      if (title) payload.title = title;
-      if (lyrics) payload.lyrics = lyrics; // best-effort; ignored by models that don't take it
 
       const r = await fetch(V2_BASE + '/v2/music/generate', { method: 'POST', headers, body: JSON.stringify(payload) });
       const txt = await r.text(); let d; try { d = JSON.parse(txt); } catch (e) { d = {}; }
