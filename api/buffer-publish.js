@@ -43,11 +43,11 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
-  const token = process.env.BUFFER_TOKEN;
-  if (!token) return res.status(500).json({ error: 'BUFFER_TOKEN is not set in Vercel (creative-os-api). Create a personal key at publish.buffer.com/settings/api.' });
-
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    // Per-client token (sent from the selected client's Brand Kit) takes priority; global env is the fallback.
+    const token = (body.token && String(body.token).trim()) || process.env.BUFFER_TOKEN;
+    if (!token) return res.status(400).json({ error: "No Buffer token for this client. Add this client's Buffer key in its Brand Kit (Publishing routes per client), or set a global BUFFER_TOKEN in Vercel." });
     const action = body.action || 'channels';
 
     if (action === 'orgs') {
